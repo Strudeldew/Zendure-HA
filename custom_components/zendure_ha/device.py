@@ -147,6 +147,7 @@ class ZendureDevice(EntityDevice):
         self.actualKwh: float = 0.0
         self.state: DeviceState = DeviceState.OFFLINE
         self.exports_bypass: bool = True
+        self.overwrite_hems: bool = False
 
         self.create_entities()
 
@@ -684,7 +685,7 @@ class ZendureDevice(EntityDevice):
     @property
     def online(self) -> bool:
         """Check if device is online."""
-        return self.connectionStatus.asInt >= SmartMode.CONNECTED
+        return self.connectionStatus.asInt >= SmartMode.CONNECTED or (self.overwrite_hems and self.hemsState.is_on)
 
     @property
     def pwr_offgrid(self) -> int:

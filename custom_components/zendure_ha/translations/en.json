@@ -507,6 +507,9 @@
       },
       "fanmode": {
         "name": "Smart Fan"
+      },
+      "overwrite_hems": {
+        "name": "Overwrite HEMS"
       }
     }
   },

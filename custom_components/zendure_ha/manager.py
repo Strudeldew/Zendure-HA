@@ -40,6 +40,7 @@ from .fusegroup import FuseGroup
 from .number import ZendureRestoreNumber
 from .select import ZendureRestoreSelect, ZendureSelect
 from .sensor import ZendureSensor
+from .switch import ZendureSwitch
 
 SCAN_INTERVAL = timedelta(seconds=60)
 
@@ -111,6 +112,7 @@ class ZendureManager(DataUpdateCoordinator[None], EntityDevice):
         self.totalKwh = ZendureSensor(self, "total_kwh", None, "kWh", "energy_storage", "measurement", 2)
         self.power = ZendureSensor(self, "power", None, "W", "power", "measurement", 0)
         self.globalSoc = ZendureSensor(self, "global_soc", None, "%", "battery", "measurement", 1)
+        self.overwriteHems = ZendureSwitch(self, "overwriteHems", self.update_overwrite_hems, None, "switch", False)
 
         # load devices
         for dev in data["deviceList"]:
@@ -165,6 +167,11 @@ class ZendureManager(DataUpdateCoordinator[None], EntityDevice):
         await self.update_fusegroups()
         self.update_p1meter(self.config_entry.data.get(CONF_P1METER, "sensor.power_actual"))
         await asyncio.sleep(1)  # allow other tasks to run
+
+    async def update_overwrite_hems(self, _switch: ZendureSwitch, value: int) -> None:
+        """Set whether HEMS-active devices participate in Manager dispatch."""
+        for device in self.devices:
+            device.overwrite_hems = value != 0
 
     async def update_fusegroups(self) -> None:
         _LOGGER.info("Update fusegroups")

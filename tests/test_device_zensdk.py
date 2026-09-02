@@ -25,6 +25,29 @@ async def test_charge_after_discharge_switches_mode(zensdk_device) -> None:  # n
     assert props == {"outputLimit": 0, "inputLimit": 400, "smartMode": 1, "acMode": 1}
 
 
+async def test_hems_charge_uses_normal_manager_command(zensdk_device) -> None:  # noqa: ANN001
+    zensdk_device.hemsState.update_value(1)
+
+    await zensdk_device.charge(-400)
+
+    assert _last_props(zensdk_device) == {"outputLimit": 0, "inputLimit": 400, "smartMode": 1, "acMode": 1}
+
+
+async def test_hems_discharge_uses_normal_manager_command(zensdk_device) -> None:  # noqa: ANN001
+    zensdk_device.hemsState.update_value(1)
+
+    await zensdk_device.discharge(500)
+
+    assert _last_props(zensdk_device) == {"outputLimit": 500, "inputLimit": 0, "smartMode": 1, "acMode": 2}
+
+
+async def test_hems_device_is_online_for_manager_dispatch(zensdk_device) -> None:  # noqa: ANN001
+    zensdk_device.hemsState.update_value(1)
+    zensdk_device.overwrite_hems = True
+
+    assert zensdk_device.online
+
+
 async def test_discharge_zero_power_sets_smart_mode_off(zensdk_device) -> None:  # noqa: ANN001
     """ZendureZenSdk.pwr_offgrid is a fixed 0, so smartMode goes to 0 when power is 0."""
     await zensdk_device.discharge(0)
@@ -54,6 +77,14 @@ async def test_charge_kickstart_boosts_power_from_stalled_start(zensdk_device) -
 
 
 async def test_power_off_sends_zero_limits(zensdk_device) -> None:  # noqa: ANN001
+    await zensdk_device.power_off()
+
+    assert _last_props(zensdk_device) == {"outputLimit": 0, "inputLimit": 0, "smartMode": 0, "acMode": 2}
+
+
+async def test_hems_power_off_uses_normal_manager_command(zensdk_device) -> None:  # noqa: ANN001
+    zensdk_device.hemsState.update_value(1)
+
     await zensdk_device.power_off()
 
     assert _last_props(zensdk_device) == {"outputLimit": 0, "inputLimit": 0, "smartMode": 0, "acMode": 2}
