@@ -75,6 +75,8 @@ class ZendureSwitch(EntityZendure, SwitchEntity, RestoreEntity):
 
     async def async_turn_on(self, **_kwargs: Any) -> None:
         """Turn switch on."""
+        self._attr_is_on = True
+        self.async_write_ha_state()
         if asyncio.iscoroutinefunction(self._onwrite):
             await self._onwrite(self, 1)
         else:
@@ -82,6 +84,8 @@ class ZendureSwitch(EntityZendure, SwitchEntity, RestoreEntity):
 
     async def async_turn_off(self, **_kwargs: Any) -> None:
         """Turn switch off."""
+        self._attr_is_on = False
+        self.async_write_ha_state()
         if asyncio.iscoroutinefunction(self._onwrite):
             await self._onwrite(self, 0)
         else:
