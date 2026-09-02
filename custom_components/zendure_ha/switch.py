@@ -11,6 +11,7 @@ from homeassistant.components.switch import SwitchEntity, SwitchEntityDescriptio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.template import Template
 
 from .entity import EntityDevice, EntityZendure
@@ -23,7 +24,7 @@ async def async_setup_entry(_hass: HomeAssistant, _config_entry: ConfigEntry, as
     ZendureSwitch.add = async_add_entities
 
 
-class ZendureSwitch(EntityZendure, SwitchEntity):
+class ZendureSwitch(EntityZendure, SwitchEntity, RestoreEntity):
     add: AddEntitiesCallback
 
     def __init__(
@@ -45,6 +46,16 @@ class ZendureSwitch(EntityZendure, SwitchEntity):
         if value is not None:
             self._attr_is_on = value
         self.add([self])
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the switch state and apply it to the device."""
+        await super().async_added_to_hass()
+        if state := await self.async_get_last_state():
+            self._attr_is_on = state.state == "on"
+            if asyncio.iscoroutinefunction(self._onwrite):
+                await self._onwrite(self, int(self._attr_is_on))
+            else:
+                self._onwrite(self, int(self._attr_is_on))
 
     def update_value(self, value: Any) -> bool:
         try:
