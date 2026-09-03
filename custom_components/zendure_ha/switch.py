@@ -35,12 +35,14 @@ class ZendureSwitch(EntityZendure, SwitchEntity, RestoreEntity):
         template: Template | None = None,
         deviceclass: Any | None = None,
         value: bool | None = None,
+        enabled_default: bool = True,
     ) -> None:
         """Initialize a switch entity."""
         super().__init__(device, uniqueid, "switch")
         self.entity_description = SwitchEntityDescription(key=uniqueid, name=uniqueid, device_class=deviceclass)
 
         self._attr_available = True
+        self._attr_entity_registry_enabled_default = enabled_default
         self._value_template: Template | None = template
         self._onwrite = onwrite
         if value is not None:
