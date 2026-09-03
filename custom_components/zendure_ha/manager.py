@@ -112,7 +112,7 @@ class ZendureManager(DataUpdateCoordinator[None], EntityDevice):
         self.totalKwh = ZendureSensor(self, "total_kwh", None, "kWh", "energy_storage", "measurement", 2)
         self.power = ZendureSensor(self, "power", None, "W", "power", "measurement", 0)
         self.globalSoc = ZendureSensor(self, "global_soc", None, "%", "battery", "measurement", 1)
-        self.overwriteHems = ZendureSwitch(self, "overwriteHems", self.update_overwrite_hems, None, "switch", False)
+        self.overwriteHems = ZendureSwitch(self, "overwriteHems", self.update_overwrite_hems, None, "switch", False, False)
 
         # load devices
         for dev in data["deviceList"]:
