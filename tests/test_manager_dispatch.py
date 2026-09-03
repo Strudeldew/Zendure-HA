@@ -31,6 +31,8 @@ class _FakeDevice:
 
     def __init__(self, *, pwr_max: int, electric_level: int, state: DeviceState = DeviceState.INACTIVE) -> None:
         self.pwr_max = pwr_max
+        self.charge_limit = min(0, pwr_max)
+        self.discharge_limit = max(0, pwr_max)
         self.electricLevel = SimpleNamespace(asInt=electric_level)
         self.byPass = SimpleNamespace(asInt=0)
         self.pwr_offgrid = 0
@@ -55,6 +57,7 @@ class _FakeDevice:
 def _make_manager_harness() -> ZendureManager:
     manager = object.__new__(ZendureManager)
     manager.operationstate = _RecordingSensor()
+    manager.overwriteHems = SimpleNamespace(is_on=False)
     manager.charge = []
     manager.charge_limit = 0
     manager.charge_optimal = 0
@@ -108,3 +111,35 @@ async def test_power_charge_first_call_primes_hysteria_and_forces_zero_setpoint(
     assert manager.charge_time == now + timedelta(seconds=2)
     assert manager.pwr_low == 0
     assert manager.operationstate.values == [ManagerState.IDLE.value]
+
+
+async def test_power_charge_with_hems_override_dispatches_without_hysteresis() -> None:
+    manager = _make_manager_harness()
+    manager.overwriteHems.is_on = True
+    device = _FakeDevice(pwr_max=-2400, electric_level=50)
+    manager.charge = [device]
+    manager.charge_limit = -2400
+    manager.charge_weight = device.pwr_max * (100 - device.electricLevel.asInt)
+    now = datetime(2026, 7, 24, 12, 0, 0)
+
+    await manager.power_charge(-500, now)
+
+    assert device.charge_calls == [-500]
+    assert manager.operationstate.values == [ManagerState.CHARGE.value]
+
+
+async def test_power_discharge_with_hems_override_reverses_without_zero_command() -> None:
+    manager = _make_manager_harness()
+    manager.overwriteHems.is_on = True
+    device = _FakeDevice(pwr_max=2400, electric_level=50)
+    manager.charge = [device]
+    manager.charge_limit = -2400
+    manager.charge_optimal = 600
+    manager.charge_weight = device.pwr_max * device.electricLevel.asInt
+    now = datetime(2026, 7, 24, 12, 0, 0)
+
+    await manager.power_discharge(500)
+
+    assert device.discharge_calls == [500]
+    assert device.charge_calls == []
+    assert manager.operationstate.values == [ManagerState.DISCHARGE.value]

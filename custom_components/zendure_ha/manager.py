@@ -161,6 +161,7 @@ class ZendureManager(DataUpdateCoordinator[None], EntityDevice):
 
         self.devices = list(Api.devices.values())
         _LOGGER.info("Loaded %s devices", len(self.devices))
+        await self.update_overwrite_hems(self.overwriteHems, int(self.overwriteHems.is_on))
 
         # initialize the api & p1 meter
         self.api.Init(self.config_entry.data, mqtt)
@@ -299,6 +300,7 @@ class ZendureManager(DataUpdateCoordinator[None], EntityDevice):
         time = datetime.now()
         kwh = 0
         for device in self.devices:
+            device.overwrite_hems = self.overwriteHems.is_on
             kwh += device.kWh
             if isinstance(device, ZendureLegacy) and device.bleMac is None:
                 for si in bluetooth.async_discovered_service_info(self.hass, False):
@@ -529,16 +531,23 @@ class ZendureManager(DataUpdateCoordinator[None], EntityDevice):
         """Charge devices."""
         _LOGGER.info("Charge => setpoint %sW", setpoint)
 
-        # stop discharging devices
-        for d in self.discharge:
-            # avoid stopping bypassing devices
-            if d.byPass.asInt > 0:
-                continue
-            # avoid gridOff device to use power from the grid
-            await d.power_discharge(0 if d.pwr_offgrid == 0 else -10)
+        # Stop discharging devices before charging unless HEMS can switch the
+        # inverter direction without an intermediate idle state.
+        if not self.overwriteHems.is_on:
+            for d in self.discharge:
+                if d.byPass.asInt > 0:
+                    continue
+                await d.power_discharge(0 if d.pwr_offgrid == 0 else -10)
 
-        # prevent hysteria
-        if self.charge_time > time:
+        # Device telemetry can still describe the previous discharge direction
+        # when HEMS allows an immediate reversal.
+        if self.overwriteHems.is_on and not self.charge and self.discharge:
+            self.operationstate.update_value(ManagerState.CHARGE.value if setpoint < 0 else ManagerState.IDLE.value)
+            await self.discharge[0].power_charge(max(setpoint, self.discharge[0].charge_limit))
+            return
+
+        # Prevent rapid direction changes unless the HEMS override is active.
+        if not self.overwriteHems.is_on and self.charge_time > time:
             if self.charge_time == datetime.max:
                 self.charge_time = time + timedelta(seconds=2 if (time - self.charge_last).total_seconds() > 300 else 60)
                 self.charge_last = self.charge_time
@@ -571,7 +580,7 @@ class ZendureManager(DataUpdateCoordinator[None], EntityDevice):
                 pwr = max(setpoint - limit, setpoint, d.pwr_max)
 
             # make sure we have devices in optimal working range
-            if len(self.charge) > 1 and i == 0:
+            if not self.overwriteHems.is_on and len(self.charge) > 1 and i == 0:
                 self.pwr_low = 0 if (delta := d.charge_start * 1.5 - pwr) >= 0 else self.pwr_low + int(-delta)
                 pwr = 0 if self.pwr_low < d.charge_optimal else pwr
 
@@ -594,17 +603,25 @@ class ZendureManager(DataUpdateCoordinator[None], EntityDevice):
     async def power_discharge(self, setpoint: int) -> None:
         """Discharge devices."""
         _LOGGER.info("Discharge => setpoint %sW", setpoint)
-        self.operationstate.update_value(ManagerState.DISCHARGE.value if setpoint > 0 and self.discharge else ManagerState.IDLE.value)
+        has_discharge_device = bool(self.discharge or (self.overwriteHems.is_on and self.charge))
+        self.operationstate.update_value(ManagerState.DISCHARGE.value if setpoint > 0 and has_discharge_device else ManagerState.IDLE.value)
 
         # reset hysteria time
         if self.charge_time != datetime.max:
             self.charge_time = datetime.max
             self.pwr_low = 0
 
-        # stop charging devices
-        for d in self.charge:
-            # SF 2400 may show more gridInputPower than offGridPower and will be recognized as charging, so set power to 10 instead of 0
-            await d.power_discharge(0 if max(0, d.pwr_offgrid) == 0 else 10)
+        # Stop charging devices before discharging unless HEMS can switch the
+        # inverter direction without an intermediate idle state.
+        if not self.overwriteHems.is_on:
+            for d in self.charge:
+                await d.power_discharge(0 if max(0, d.pwr_offgrid) == 0 else 10)
+
+        # Device telemetry can still describe the previous charge direction
+        # when HEMS allows an immediate reversal.
+        if self.overwriteHems.is_on and not self.discharge and self.charge:
+            await self.charge[0].power_discharge(min(setpoint, self.charge[0].discharge_limit))
+            return
 
         # distribute discharging devices, use produced power first, before adding another device
         dev_start = max(0, setpoint - self.discharge_optimal * 2 - self.discharge_produced) if setpoint > SmartMode.POWER_START else 0
@@ -637,7 +654,7 @@ class ZendureManager(DataUpdateCoordinator[None], EntityDevice):
             pwr = min(pwr, setpoint, d.pwr_max)
 
             # make sure we have devices in optimal working range
-            if len(self.discharge) > 1 and i == 0 and d.state != DeviceState.SOCFULL:
+            if not self.overwriteHems.is_on and len(self.discharge) > 1 and i == 0 and d.state != DeviceState.SOCFULL:
                 self.pwr_low = 0 if (delta := d.discharge_start * 1.5 - pwr) <= 0 else self.pwr_low + int(delta)
                 pwr = 0 if self.pwr_low > d.discharge_optimal else pwr
 
