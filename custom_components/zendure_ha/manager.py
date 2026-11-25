@@ -93,6 +93,8 @@ class ZendureManager(DataUpdateCoordinator[None], EntityDevice):
         self.idle_lvlmin = 0
         self.produced = 0
         self.pwr_low = 0
+        self.hems_idle_since = datetime.max
+        self.hems_last_state = ManagerState.IDLE
 
     async def loadDevices(self) -> None:
         if self.config_entry is None or (data := await Api.Connect(self.hass, dict(self.config_entry.data), True)) is None:
@@ -573,7 +575,8 @@ class ZendureManager(DataUpdateCoordinator[None], EntityDevice):
         # Device telemetry can still describe the previous discharge direction
         # when HEMS allows an immediate reversal.
         if self.overwriteHems.is_on and not self.charge and self.discharge:
-            self.operationstate.update_value(ManagerState.CHARGE.value if setpoint < 0 else ManagerState.IDLE.value)
+            if not self._update_operation_state(ManagerState.CHARGE if setpoint < 0 else ManagerState.IDLE, time):
+                return
             await self.discharge[0].power_charge(max(setpoint, self.discharge[0].charge_limit))
             return
 
@@ -589,7 +592,8 @@ class ZendureManager(DataUpdateCoordinator[None], EntityDevice):
                 self.charge_last = self.charge_time
                 self.pwr_low = 0
             setpoint = 0
-        self.operationstate.update_value(ManagerState.CHARGE.value if setpoint < 0 else ManagerState.IDLE.value)
+        if not self._update_operation_state(ManagerState.CHARGE if setpoint < 0 else ManagerState.IDLE, time):
+            return
 
         # distribute charging devices
         dev_start = min(0, setpoint - self.charge_optimal * 2) if setpoint < -SmartMode.POWER_START else 0
@@ -640,7 +644,9 @@ class ZendureManager(DataUpdateCoordinator[None], EntityDevice):
         """Discharge devices."""
         _LOGGER.info("Discharge => setpoint %sW", setpoint)
         has_discharge_device = bool(self.discharge or (self.overwriteHems.is_on and self.charge))
-        self.operationstate.update_value(ManagerState.DISCHARGE.value if setpoint > 0 and has_discharge_device else ManagerState.IDLE.value)
+        state = ManagerState.DISCHARGE if setpoint > 0 and has_discharge_device else ManagerState.IDLE
+        if not self._update_operation_state(state):
+            return
 
         # reset hysteria time
         if self.charge_time != datetime.max:
@@ -706,3 +712,26 @@ class ZendureManager(DataUpdateCoordinator[None], EntityDevice):
                     if (dev_start := dev_start - d.discharge_optimal * 2) <= 0:
                         break
             self.pwr_low: int = 0
+
+    def _update_operation_state(self, state: ManagerState, time: datetime | None = None) -> bool:
+        """Delay HEMS workaround idle transitions caused by transient telemetry."""
+        if not self.overwriteHems.is_on or state != ManagerState.IDLE:
+            self.operationstate.update_value(state.value)
+            self.hems_last_state = state
+            self.hems_idle_since = datetime.max
+            return True
+
+        if self.hems_last_state == ManagerState.IDLE:
+            self.operationstate.update_value(state.value)
+            return True
+
+        now = time or datetime.now()
+        if self.hems_idle_since == datetime.max:
+            self.hems_idle_since = now
+        if (now - self.hems_idle_since).total_seconds() < SmartMode.HEMS_IDLE_DELAY:
+            return False
+
+        self.operationstate.update_value(state.value)
+        self.hems_last_state = state
+        self.hems_idle_since = datetime.max
+        return True

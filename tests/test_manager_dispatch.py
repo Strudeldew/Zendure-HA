@@ -76,6 +76,8 @@ def _make_manager_harness() -> ZendureManager:
     manager.idle_lvlmax = 0
     manager.idle_lvlmin = 0
     manager.pwr_low = 0
+    manager.hems_idle_since = datetime.max
+    manager.hems_last_state = ManagerState.IDLE
     return manager
 
 
@@ -257,3 +259,22 @@ async def test_power_discharge_with_hems_override_reverses_without_zero_command(
     assert device.discharge_calls == [500]
     assert device.charge_calls == []
     assert manager.operationstate.values == [ManagerState.DISCHARGE.value]
+
+
+async def test_power_charge_with_hems_override_delays_transient_idle() -> None:
+    manager = _make_manager_harness()
+    manager.overwriteHems.is_on = True
+    device = _FakeDevice(pwr_max=-2400, electric_level=50)
+    manager.charge = [device]
+    manager.charge_limit = -2400
+    manager.charge_weight = device.pwr_max * (100 - device.electricLevel.asInt)
+    start = datetime(2026, 7, 24, 12, 0, 0)
+
+    await manager.power_charge(-500, start)
+    await manager.power_charge(0, start + timedelta(seconds=1))
+
+    assert manager.operationstate.values == [ManagerState.CHARGE.value]
+
+    await manager.power_charge(0, start + timedelta(seconds=4))
+
+    assert manager.operationstate.values[-1] == ManagerState.IDLE.value
